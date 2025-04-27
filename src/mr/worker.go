@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/rpc"
 	"os"
@@ -85,7 +85,8 @@ func Worker(mapf func(string, string) []KeyValue,
 
 		if RequestWorkReply.WorkType == "" {
 			// No more work to do, exit the loop
-			break
+			log.Printf("worker " + strconv.Itoa(workerID) + " exited")
+			return
 		}
 
 		if RequestWorkReply.WorkType == "map" {
@@ -93,7 +94,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			if err != nil {
 				log.Fatalf("cannot open %v", RequestWorkReply.FileName)
 			}
-			content, err := ioutil.ReadAll(file)
+			content, err := io.ReadAll(file)
 			if err != nil {
 				log.Fatalf("cannot read %v", RequestWorkReply.FileName)
 			}
@@ -127,9 +128,7 @@ func Worker(mapf func(string, string) []KeyValue,
 				mapTasksID: RequestWorkReply.mapTasksID,
 			}
 
-			WorkFinishedReply := WorkFinishedReply{
-				WorkerID: 0,
-			}
+			WorkFinishedReply := WorkFinishedReply{}
 
 			ok = call("Coordinator.WorkFinished", &WorkFinishedArgs, &WorkFinishedReply)
 			if !ok {
@@ -150,8 +149,7 @@ func Worker(mapf func(string, string) []KeyValue,
 				if err != nil {
 					log.Fatalf("cannot open %v", file)
 				}
-				defer f.Close()
-
+				
 				dec := json.NewDecoder(f)
 				for {
 					var kv KeyValue
@@ -160,6 +158,7 @@ func Worker(mapf func(string, string) []KeyValue,
 					}
 					kva = append(kva, kv)
 				}
+				f.Close()
 			}
 
 			// sort the intermediate key/value pairs
@@ -171,8 +170,6 @@ func Worker(mapf func(string, string) []KeyValue,
 			if err != nil {
 				log.Fatalf("cannot create %v", oname)
 			}
-
-			defer ofile.Close()
 
 			i := 0
 			for i < len(kva) {
@@ -192,6 +189,8 @@ func Worker(mapf func(string, string) []KeyValue,
 				i = j
 			}
 
+			ofile.Close()
+
 			// send the reduce task finished message to the coordinator
 			WorkFinishedArgs := WorkFinishedArgs{
 				WorkerID: workerID,
@@ -199,9 +198,7 @@ func Worker(mapf func(string, string) []KeyValue,
 				reduceTaskID: RequestWorkReply.reduceTaskID,
 			}
 
-			WorkFinishedReply := WorkFinishedReply{
-				WorkerID: 0,
-			}
+			WorkFinishedReply := WorkFinishedReply{}
 
 			ok = call("Coordinator.WorkFinished", &WorkFinishedArgs, &WorkFinishedReply)
 			if !ok {

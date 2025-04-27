@@ -50,26 +50,27 @@ func (c *Coordinator) RequestWork(args *RequestWorkArgs, reply *RequestWorkReply
 			if !c.mapTasksStatus[file] {
 				reply.FileName = file
 				reply.mapTasksID = i
+				c.rwlock.RUnlock()
 				return nil
 			}
 		}
 	}
 
-	// only the workers with IDs <= nReduce can do reduce work
-	if c.finishedMapTasks >= c.maptasks && c.finishedReduceTasks < c.reducetasks && args.WorkerID <= c.reducetasks {
+	if c.finishedMapTasks == c.maptasks && c.finishedReduceTasks < c.reducetasks {
 		reply.WorkType = "reduce"
 		for i := 0; i < c.reducetasks; i++ {
 			if !c.reduceTasksStatus[i] {
 				reply.reduceTaskID = i
+				c.rwlock.RUnlock()
 				return nil
 			}
 		}
 	}
 
-	c.rwlock.RUnlock()
-
+	
 	reply.WorkType = ""	// no more work to do
-
+	
+	c.rwlock.RUnlock()
 	return nil
 }
 
@@ -78,17 +79,19 @@ func (c *Coordinator) WorkFinished(args *WorkFinishedArgs, reply *WorkFinishedRe
 	if args.WorkType == "map" {
 		c.mapTasksStatus[args.FileName] = true	
 		c.finishedMapTasks++
+		c.rwlock.Unlock()
 		return nil
 	}
 
 	if args.WorkType == "reduce" {
 		c.reduceTasksStatus[args.reduceTaskID] = true	
 		c.finishedReduceTasks++
+		c.rwlock.Unlock()
 		return nil
 	}
-	c.rwlock.Unlock()
-
+	
 	log.Printf("Worker %d finished work\n", args.WorkerID)
+	c.rwlock.Unlock()
 	return nil
 }
 
@@ -117,6 +120,7 @@ func (c *Coordinator) server() {
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
+	log.Printf("Coordinator server is listening on %s\n", sockname)
 	go http.Serve(l, nil)
 }
 

@@ -51,9 +51,7 @@ type WorkFinishedArgs struct {
 	reduceTaskID int // worker ID for reduce work
 }
 
-type WorkFinishedReply struct {
-	WorkerID int // worker ID
-}
+type WorkFinishedReply struct {}
 
 
 // Cook up a unique-ish UNIX-domain socket name
