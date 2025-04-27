@@ -17,9 +17,9 @@ type Coordinator struct {
 	fileNames 			[]string				// input file names
 	maptasks			int						// map tasks
 	reducetasks			int						// reduce tasks
-	mapTasksStatus		map[string]bool			// filename -> bool, true means finished, 
-												// false means not finished
-	reduceTasksStatus	map[int]bool			// int -> bool, we have nReduce reduce tasks
+	mapTasksStatus		map[string]int			// filename -> int, 0: unsigned, 1: signed, 
+												// 2: finished, 
+	reduceTasksStatus	map[int]int				// int -> int, we have nReduce reduce tasks
 												// false means not finished
 	finishedMapTasks	int						// finished map tasks
 	finishedReduceTasks	int						// finished reduce tasks
@@ -47,7 +47,8 @@ func (c *Coordinator) RequestWork(args *RequestWorkArgs, reply *RequestWorkReply
 	if c.finishedMapTasks < c.maptasks {
 		reply.WorkType = "map"
 		for i, file := range c.fileNames {
-			if !c.mapTasksStatus[file] {
+			if c.mapTasksStatus[file] == 0 {
+				c.mapTasksStatus[file] = 1
 				reply.FileName = file
 				reply.mapTasksID = i
 				c.rwlock.RUnlock()
@@ -59,7 +60,8 @@ func (c *Coordinator) RequestWork(args *RequestWorkArgs, reply *RequestWorkReply
 	if c.finishedMapTasks == c.maptasks && c.finishedReduceTasks < c.reducetasks {
 		reply.WorkType = "reduce"
 		for i := 0; i < c.reducetasks; i++ {
-			if !c.reduceTasksStatus[i] {
+			if c.reduceTasksStatus[i] == 0 {
+				c.reduceTasksStatus[i] = 1
 				reply.reduceTaskID = i
 				c.rwlock.RUnlock()
 				return nil
@@ -77,15 +79,19 @@ func (c *Coordinator) RequestWork(args *RequestWorkArgs, reply *RequestWorkReply
 func (c *Coordinator) WorkFinished(args *WorkFinishedArgs, reply *WorkFinishedReply) error {
 	c.rwlock.Lock()
 	if args.WorkType == "map" {
-		c.mapTasksStatus[args.FileName] = true	
-		c.finishedMapTasks++
+		if c.mapTasksStatus[args.FileName] == 1 {
+			c.mapTasksStatus[args.FileName] = 2	
+			c.finishedMapTasks++
+		}
 		c.rwlock.Unlock()
 		return nil
 	}
 
 	if args.WorkType == "reduce" {
-		c.reduceTasksStatus[args.reduceTaskID] = true	
-		c.finishedReduceTasks++
+		if c.reduceTasksStatus[args.reduceTaskID] == 1 { 
+			c.reduceTasksStatus[args.reduceTaskID] = 2	
+			c.finishedReduceTasks++
+		}
 		c.rwlock.Unlock()
 		return nil
 	}
@@ -157,17 +163,17 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.reducetasks = nReduce
 	c.wokerIDs = make([]int, 0)
 	c.workerNum = 0
-	c.mapTasksStatus = make(map[string]bool)
-	c.reduceTasksStatus = make(map[int]bool)
+	c.mapTasksStatus = make(map[string]int)
+	c.reduceTasksStatus = make(map[int]int)
 	c.finishedMapTasks = 0
 	c.finishedReduceTasks = 0
 
 	for _, file := range files {
-		c.mapTasksStatus[file] = false	// set status to false (not finished)
+		c.mapTasksStatus[file] = 0	// set status to false (not finished)
 	}
 
 	for i := 0; i < nReduce; i++ {
-		c.reduceTasksStatus[i] = false	// set status to false (not finished)
+		c.reduceTasksStatus[i] = 0	// set status to false (not finished)
 	}
 
 
