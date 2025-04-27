@@ -24,6 +24,37 @@ type ExampleReply struct {
 
 // Add your RPC definitions here.
 
+type RegisterWorkerArgs struct {}	// empty args
+
+type RegisterWorkerReply struct {
+	WorkerID int // worker ID
+	ReduceTasks int // number of reduce tasks
+}
+
+type RequestWorkArgs struct {
+	WorkerID int // worker ID
+}
+
+type RequestWorkReply struct {
+	WorkerID int // worker ID
+	WorkType string // "map" or "reduce"
+	FileName string // file name for map work
+	mapTasksID int // worker ID for map work
+	reduceTaskID int // worker ID for reduce work
+}
+
+type WorkFinishedArgs struct {
+	WorkerID int // worker ID
+	WorkType string // "map" or "reduce"
+	FileName string // file name for map work
+	mapTasksID int // worker ID for map work
+	reduceTaskID int // worker ID for reduce work
+}
+
+type WorkFinishedReply struct {
+	WorkerID int // worker ID
+}
+
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.

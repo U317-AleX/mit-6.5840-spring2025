@@ -1,17 +1,32 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io/ioutil"
+	"log"
+	"net/rpc"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+)
 
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 //
 // Map functions return a slice of KeyValue.
 //
 type KeyValue struct {
 	Key   string
-	Value string
+	Value string 
 }
 
 //
@@ -32,12 +47,172 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
+	RegisterWorkerArgs := RegisterWorkerArgs{}
 
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
+	RegisterWorkerReply := RegisterWorkerReply{
+		WorkerID: 0,
+		ReduceTasks: 0,
+	}
 
+	ok := call("Coordinator.RegisterWorker", &RegisterWorkerArgs, &RegisterWorkerReply)
+
+	if !ok {
+		log.Fatal("RegisterWorker failed")
+	}
+
+	workerID := RegisterWorkerReply.WorkerID
+	reduceTasks := RegisterWorkerReply.ReduceTasks
+
+	for {
+		// Request work from the coordinator
+		RequestWorkArgs := RequestWorkArgs{
+			WorkerID: workerID,
+		}
+
+		RequestWorkReply := RequestWorkReply{
+			WorkerID: 0,
+			WorkType: "",
+			FileName: "",
+			mapTasksID: 0,
+			reduceTaskID: 0,
+		}
+
+		ok := call("Coordinator.RequestWork", &RequestWorkArgs, &RequestWorkReply)
+
+		if !ok {
+			log.Fatal("RequestWork failed")
+		}
+
+		if RequestWorkReply.WorkType == "" {
+			// No more work to do, exit the loop
+			break
+		}
+
+		if RequestWorkReply.WorkType == "map" {
+			file, err := os.Open(RequestWorkReply.FileName)
+			if err != nil {
+				log.Fatalf("cannot open %v", RequestWorkReply.FileName)
+			}
+			content, err := ioutil.ReadAll(file)
+			if err != nil {
+				log.Fatalf("cannot read %v", RequestWorkReply.FileName)
+			}
+			file.Close()
+			kva := mapf(RequestWorkReply.FileName, string(content))
+			
+			// create intermediate files for each reduce task
+			for i := 0; i < reduceTasks; i++ {
+				oname := "mr-" + strconv.Itoa(RequestWorkReply.mapTasksID) + "-" + strconv.Itoa(i)
+				ofile, err := os.Create(oname)
+				if err != nil {
+					log.Fatalf("cannot create %v", oname)
+				}
+				enc := json.NewEncoder(ofile)
+				for _, kv := range kva {
+					if ihash(kv.Key) % reduceTasks == i {
+						err := enc.Encode(&kv)
+						if err != nil {
+							log.Fatalf("cannot encode %v", kv)
+						}
+					}
+				}
+				ofile.Close()
+			}
+
+			// send the intermediate files to the coordinator
+			WorkFinishedArgs := WorkFinishedArgs{
+				WorkerID: workerID,
+				WorkType: "map",
+				FileName: RequestWorkReply.FileName,
+				mapTasksID: RequestWorkReply.mapTasksID,
+			}
+
+			WorkFinishedReply := WorkFinishedReply{
+				WorkerID: 0,
+			}
+
+			ok = call("Coordinator.WorkFinished", &WorkFinishedArgs, &WorkFinishedReply)
+			if !ok {
+				log.Fatal("WorkFinished failed")
+			}
+		}
+
+		if RequestWorkReply.WorkType == "reduce" {
+			// open files for the reduce task
+			kva := []KeyValue{}
+			files, err := filepath.Glob("mr-*-" + strconv.Itoa(RequestWorkReply.reduceTaskID))
+			if err != nil {
+				log.Fatalf("cannot find files for reduce task %d", RequestWorkReply.reduceTaskID)
+			}
+
+			for _, file := range files {
+				f, err := os.Open(file)
+				if err != nil {
+					log.Fatalf("cannot open %v", file)
+				}
+				defer f.Close()
+
+				dec := json.NewDecoder(f)
+				for {
+					var kv KeyValue
+					if err := dec.Decode(&kv); err != nil {
+						break
+					}
+					kva = append(kva, kv)
+				}
+			}
+
+			// sort the intermediate key/value pairs
+			sort.Sort(ByKey(kva))
+
+			// create the output file for the reduce task
+			oname := "mr-out-" + strconv.Itoa(RequestWorkReply.reduceTaskID)
+			ofile, err := os.Create(oname)
+			if err != nil {
+				log.Fatalf("cannot create %v", oname)
+			}
+
+			defer ofile.Close()
+
+			i := 0
+			for i < len(kva) {
+				j := i + 1
+				for j < len(kva) && kva[j].Key == kva[i].Key {
+					j++
+				}
+				values := []string{}
+				for k := i; k < j; k++ {
+					values = append(values, kva[k].Value)
+				}
+				output := reducef(kva[i].Key, values)
+
+				// this is the correct format for each line of Reduce output.
+				fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output)
+
+				i = j
+			}
+
+			// send the reduce task finished message to the coordinator
+			WorkFinishedArgs := WorkFinishedArgs{
+				WorkerID: workerID,
+				WorkType: "reduce",
+				reduceTaskID: RequestWorkReply.reduceTaskID,
+			}
+
+			WorkFinishedReply := WorkFinishedReply{
+				WorkerID: 0,
+			}
+
+			ok = call("Coordinator.WorkFinished", &WorkFinishedArgs, &WorkFinishedReply)
+			if !ok {
+				log.Fatal("WorkFinished failed")
+			}
+		}
+	}
 }
 
+// uncomment to send the Example RPC to the coordinator.
+// CallExample()
 //
 // example function to show how to make an RPC call to the coordinator.
 //
