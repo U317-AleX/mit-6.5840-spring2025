@@ -42,7 +42,7 @@ func (c *Coordinator) RegisterWorker(args *RegisterWorkerArgs, reply *RegisterWo
 }
 
 func (c *Coordinator) RequestWork(args *RequestWorkArgs, reply *RequestWorkReply) error {
-	c.rwlock.RLock()
+	c.rwlock.Lock()
 
 	if c.finishedMapTasks < c.maptasks {
 		reply.WorkType = "map"
@@ -51,7 +51,14 @@ func (c *Coordinator) RequestWork(args *RequestWorkArgs, reply *RequestWorkReply
 				c.mapTasksStatus[file] = 1
 				reply.FileName = file
 				reply.mapTasksID = i
-				c.rwlock.RUnlock()
+				c.rwlock.Unlock()
+
+				// sleep(10)
+				// c.rwlock.Lock()
+				// if c.mapTasksStatus[file] != 2 {
+				// 		c.mapTasksStatus[file] = 0
+				// }
+				// c.rwlock.Unlock()
 				return nil
 			}
 		}
@@ -63,7 +70,14 @@ func (c *Coordinator) RequestWork(args *RequestWorkArgs, reply *RequestWorkReply
 			if c.reduceTasksStatus[i] == 0 {
 				c.reduceTasksStatus[i] = 1
 				reply.reduceTaskID = i
-				c.rwlock.RUnlock()
+				c.rwlock.Unlock()
+
+				// sleep(10)
+				// c.rwlock.Lock()
+				// if c.mapTasksStatus[i] != 2 {
+				// 		c.mapTasksStatus[i] = 0
+				// }
+				// c.rwlock.Unlock()
 				return nil
 			}
 		}
@@ -72,7 +86,7 @@ func (c *Coordinator) RequestWork(args *RequestWorkArgs, reply *RequestWorkReply
 	
 	reply.WorkType = ""	// no more work to do
 	
-	c.rwlock.RUnlock()
+	c.rwlock.Unlock()
 	return nil
 }
 
