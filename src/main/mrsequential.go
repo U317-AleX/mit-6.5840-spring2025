@@ -50,6 +50,11 @@ func main() {
 		intermediate = append(intermediate, kva...)
 	}
 
+	// // cat intermediate[]
+	// for i, kv := range intermediate {
+	// 	fmt.Printf("intermediate[%d]: %v %v\n", i, kv.Key, kv.Value)
+	// }
+
 	//
 	// a big difference from real MapReduce is that all the
 	// intermediate data is in one place, intermediate[],
@@ -57,6 +62,11 @@ func main() {
 	//
 
 	sort.Sort(ByKey(intermediate))
+
+	// // cat intermediate[]
+	// for i, kv := range intermediate {
+	// 	fmt.Printf("intermediate[%d]: %v %v\n", i, kv.Key, kv.Value)
+	// }
 
 	oname := "mr-out-0"
 	ofile, _ := os.Create(oname)
@@ -76,6 +86,9 @@ func main() {
 			values = append(values, intermediate[k].Value)
 		}
 		output := reducef(intermediate[i].Key, values)
+
+		// // cat output
+		// fmt.Printf("output: %v %v\n", intermediate[i].Key, output)
 
 		// this is the correct format for each line of Reduce output.
 		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)

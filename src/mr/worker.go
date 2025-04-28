@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"time"
 )
 
 // for sorting by key.
@@ -49,10 +50,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	// Your worker implementation here.
 	RegisterWorkerArgs := RegisterWorkerArgs{}
 
-	RegisterWorkerReply := RegisterWorkerReply{
-		WorkerID: 0,
-		ReduceTasks: 0,
-	}
+	RegisterWorkerReply := RegisterWorkerReply{}
 
 	ok := call("Coordinator.RegisterWorker", &RegisterWorkerArgs, &RegisterWorkerReply)
 
@@ -60,33 +58,45 @@ func Worker(mapf func(string, string) []KeyValue,
 		log.Fatal("RegisterWorker failed")
 	}
 
+	log.Printf("worker %d registered\n", RegisterWorkerReply.WorkerID)
+
 	workerID := RegisterWorkerReply.WorkerID
 	reduceTasks := RegisterWorkerReply.ReduceTasks
 
 	for {
+		// ask if the entire tasks are done
+		DoneArgs := DoneArgs{}
+		DoneReply := DoneReply{}
+
+		ok := call("Coordinator.DoneTest", &DoneArgs, &DoneReply)
+		if !ok {
+			log.Fatal("DoneTest failed")
+		}
+
+		if DoneReply.Done == true {
+			log.Printf(strconv.Itoa(workerID) + " "+ "exited")
+			return
+		}
+
 		// Request work from the coordinator
 		RequestWorkArgs := RequestWorkArgs{
 			WorkerID: workerID,
 		}
 
-		RequestWorkReply := RequestWorkReply{
-			WorkerID: 0,
-			WorkType: "",
-			FileName: "",
-			mapTasksID: 0,
-			reduceTaskID: 0,
-		}
+		RequestWorkReply := RequestWorkReply{}
 
-		ok := call("Coordinator.RequestWork", &RequestWorkArgs, &RequestWorkReply)
+		ok = call("Coordinator.RequestWork", &RequestWorkArgs, &RequestWorkReply)
 
 		if !ok {
 			log.Fatal("RequestWork failed")
 		}
 
-		if RequestWorkReply.WorkType == "" {
-			// No more work to do, exit the loop
-			log.Printf("worker " + strconv.Itoa(workerID) + " exited")
-			return
+		log.Printf("assigned work worker: " + strconv.Itoa(workerID) + " work type: " + RequestWorkReply.WorkType + " file name: " + RequestWorkReply.FileName + " map task ID: " + strconv.Itoa(RequestWorkReply.MapTaskID) + " reduce task ID: " + strconv.Itoa(RequestWorkReply.ReduceTaskID))
+
+		if RequestWorkReply.WorkType == "wait" {
+			// No more work to do, wait
+			time.Sleep(time.Second) 
+        	continue
 		}
 
 		if RequestWorkReply.WorkType == "map" {
@@ -98,12 +108,16 @@ func Worker(mapf func(string, string) []KeyValue,
 			if err != nil {
 				log.Fatalf("cannot read %v", RequestWorkReply.FileName)
 			}
-			file.Close()
+			err = file.Close()
+			if err != nil {
+				log.Fatalf("cannot close %v", RequestWorkReply.FileName)
+			}
+
 			kva := mapf(RequestWorkReply.FileName, string(content))
 			
 			// create intermediate files for each reduce task
 			for i := 0; i < reduceTasks; i++ {
-				oname := "mr-" + strconv.Itoa(RequestWorkReply.mapTasksID) + "-" + strconv.Itoa(i)
+				oname := "./" + "mr-" + strconv.Itoa(RequestWorkReply.MapTaskID) + "-" + strconv.Itoa(i)
 				ofile, err := os.Create(oname)
 				if err != nil {
 					log.Fatalf("cannot create %v", oname)
@@ -117,7 +131,10 @@ func Worker(mapf func(string, string) []KeyValue,
 						}
 					}
 				}
-				ofile.Close()
+				err = ofile.Close()
+				if err != nil {
+					log.Fatalf("can not close file %v", oname)
+				}
 			}
 
 			// send the intermediate files to the coordinator
@@ -125,7 +142,7 @@ func Worker(mapf func(string, string) []KeyValue,
 				WorkerID: workerID,
 				WorkType: "map",
 				FileName: RequestWorkReply.FileName,
-				mapTasksID: RequestWorkReply.mapTasksID,
+				MapTaskID: RequestWorkReply.MapTaskID,
 			}
 
 			WorkFinishedReply := WorkFinishedReply{}
@@ -134,14 +151,16 @@ func Worker(mapf func(string, string) []KeyValue,
 			if !ok {
 				log.Fatal("WorkFinished failed")
 			}
+
+			log.Printf("worker %d finished map task %s \n", workerID, RequestWorkReply.FileName)
 		}
 
 		if RequestWorkReply.WorkType == "reduce" {
 			// open files for the reduce task
 			kva := []KeyValue{}
-			files, err := filepath.Glob("mr-*-" + strconv.Itoa(RequestWorkReply.reduceTaskID))
+			files, err := filepath.Glob("./" + "mr-*-" + strconv.Itoa(RequestWorkReply.ReduceTaskID))
 			if err != nil {
-				log.Fatalf("cannot find files for reduce task %d", RequestWorkReply.reduceTaskID)
+				log.Fatalf("cannot find files for reduce task %d", RequestWorkReply.ReduceTaskID)
 			}
 
 			for _, file := range files {
@@ -158,14 +177,22 @@ func Worker(mapf func(string, string) []KeyValue,
 					}
 					kva = append(kva, kv)
 				}
-				f.Close()
+				err = f.Close()
+				if err != nil {
+					log.Fatalf("can not close file %v", file)
+				}
 			}
 
 			// sort the intermediate key/value pairs
 			sort.Sort(ByKey(kva))
 
+			// // cat kva
+			// for _, kv := range kva {
+			// 	fmt.Printf("reduce taskID: %v kva: %v %v\n", RequestWorkReply.ReduceTaskID, kv.Key, kv.Value)
+			// }
+
 			// create the output file for the reduce task
-			oname := "mr-out-" + strconv.Itoa(RequestWorkReply.reduceTaskID)
+			oname := "./" + "mr-out-" + strconv.Itoa(RequestWorkReply.ReduceTaskID)
 			ofile, err := os.Create(oname)
 			if err != nil {
 				log.Fatalf("cannot create %v", oname)
@@ -183,19 +210,25 @@ func Worker(mapf func(string, string) []KeyValue,
 				}
 				output := reducef(kva[i].Key, values)
 
+				// // cat output
+				// fmt.Printf("reduce taskID: %v output: %v %v\n", RequestWorkReply.ReduceTaskID, kva[i].Key, output)
+
 				// this is the correct format for each line of Reduce output.
 				fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output)
 
 				i = j
 			}
 
-			ofile.Close()
+			err = ofile.Close()
+			if err != nil {
+				log.Fatalf("cannot close file %v", oname)
+			}
 
 			// send the reduce task finished message to the coordinator
 			WorkFinishedArgs := WorkFinishedArgs{
 				WorkerID: workerID,
 				WorkType: "reduce",
-				reduceTaskID: RequestWorkReply.reduceTaskID,
+				ReduceTaskID: RequestWorkReply.ReduceTaskID,
 			}
 
 			WorkFinishedReply := WorkFinishedReply{}
@@ -204,6 +237,8 @@ func Worker(mapf func(string, string) []KeyValue,
 			if !ok {
 				log.Fatal("WorkFinished failed")
 			}
+
+			log.Printf("worker %d finished reduce task %d \n", workerID, RequestWorkReply.ReduceTaskID)
 		}
 	}
 }

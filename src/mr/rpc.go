@@ -24,6 +24,9 @@ type ExampleReply struct {
 
 // Add your RPC definitions here.
 
+// The RPC feature of Go requires that the fields of the transmitted 
+// structure be exported (with the first letter capitalized),
+// otherwise they will not be serialized.
 type RegisterWorkerArgs struct {}	// empty args
 
 type RegisterWorkerReply struct {
@@ -39,19 +42,25 @@ type RequestWorkReply struct {
 	WorkerID int // worker ID
 	WorkType string // "map" or "reduce"
 	FileName string // file name for map work
-	mapTasksID int // worker ID for map work
-	reduceTaskID int // worker ID for reduce work
+	MapTaskID int // worker ID for map work
+	ReduceTaskID int // worker ID for reduce work
 }
 
 type WorkFinishedArgs struct {
 	WorkerID int // worker ID
 	WorkType string // "map" or "reduce"
 	FileName string // file name for map work
-	mapTasksID int // worker ID for map work
-	reduceTaskID int // worker ID for reduce work
+	MapTaskID int // worker ID for map work
+	ReduceTaskID int // worker ID for reduce work
 }
 
 type WorkFinishedReply struct {}
+
+type DoneArgs struct {}
+
+type DoneReply struct {
+	Done bool // true if all tasks are done
+}
 
 
 // Cook up a unique-ish UNIX-domain socket name
