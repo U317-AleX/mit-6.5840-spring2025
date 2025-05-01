@@ -48,16 +48,19 @@ func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
 	
 	kv.mu.Lock()
 	valVers, ok := kv.kvStore[args.Key]
-	kv.mu.Unlock()
-
+	
 	if ok {
 		reply.Value = valVers.Val
 		reply.Version = valVers.Vers
 		reply.Err = rpc.OK
+		kv.mu.Unlock()
 		return
 	}
 
+	reply.Value = ""
+	reply.Version = 0
 	reply.Err = rpc.ErrNoKey
+	kv.mu.Unlock()
 	return
 }
 
@@ -71,44 +74,43 @@ func (kv *KVServer) Put(args *rpc.PutArgs, reply *rpc.PutReply) {
 	if args.Version == 0 {
 		kv.mu.Lock()
 		_, ok := kv.kvStore[args.Key]; 
-		kv.mu.Unlock()
 
 		if ok {
 			reply.Err = rpc.ErrVersion
+			kv.mu.Unlock()
 			return
 		}
 
-		kv.mu.Lock()
 		kv.kvStore[args.Key] = &ValVers{
 			Val: args.Value,
 			Vers: 1,
 		}
-		kv.mu.Unlock()
-
+		
 		reply.Err = rpc.OK
+		kv.mu.Unlock()
 		return
 	}
 
 	kv.mu.Lock()
 	valVers, ok := kv.kvStore[args.Key]
-	kv.mu.Unlock()
 
 	if !ok {
 		reply.Err = rpc.ErrNoKey
+		kv.mu.Unlock()
 		return
 	}
 
 	if valVers.Vers != args.Version {
 		reply.Err = rpc.ErrVersion
+		kv.mu.Unlock()
 		return
 	}
 
-	kv.mu.Lock()
 	kv.kvStore[args.Key].Val = args.Value
 	kv.kvStore[args.Key].Vers += 1
-	kv.mu.Unlock()
-
 	reply.Err = rpc.OK
+
+	kv.mu.Unlock()
 	return
 }
 
