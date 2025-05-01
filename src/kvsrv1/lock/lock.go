@@ -66,6 +66,8 @@ func (lk *Lock) Acquire() {
 			}
 		}
 	}
+	
+	// here is the code don not use while-retry pattern
 
 	// // wait for the lock to be released
 	// for state, vers, _ := lk.ck.Get(lk.l); state == lk.LockState(); state, vers, _ = lk.ck.Get(lk.l) {
@@ -110,6 +112,8 @@ func (lk *Lock) Release() {
 			return
 		}
 	}
+
+	// here is the code don not use while-retry pattern
 
 	// log.Printf("lock released")
 
