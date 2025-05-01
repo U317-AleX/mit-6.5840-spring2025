@@ -1,9 +1,9 @@
 package lock
 
 import (
-
 	"6.5840/kvsrv1/rpc"
 	"6.5840/kvtest1"
+	"github.com/google/uuid"
 )
 
 type Lock struct {
@@ -15,8 +15,9 @@ type Lock struct {
 	// You may add code here
 	version rpc.Tversion
 	l string
+	id uuid.UUID
 	// true for this thread own the lock, false for the opposite
-	isOwn bool 
+	isOwn bool
 }
 
 // The tester calls MakeLock() and passes in a k/v clerk; your code can
@@ -27,6 +28,7 @@ type Lock struct {
 func MakeLock(ck kvtest.IKVClerk, l string) *Lock {
 	lk := &Lock{ck: ck}
 	// You may add code here
+	lk.id = uuid.New()
 	lk.l = l
 	lk.version = 0
 	lk.isOwn = false
@@ -39,7 +41,7 @@ func (lk *Lock) UnlockState() (string) {
 }
 
 func (lk *Lock) LockState() (string) {
-	return "_"
+	return lk.id.String()
 }
 
 func (lk *Lock) Acquire() {
@@ -64,36 +66,18 @@ func (lk *Lock) Acquire() {
 				lk.version++
 				return
 			}
+
+			if err == rpc.ErrMaybe {
+				// check whether the id match
+				state, _, _ = lk.ck.Get(lk.l)
+				if state == lk.id.String() {
+					lk.isOwn = true
+					lk.version++
+					return
+				}
+			}
 		}
 	}
-	
-	// here is the code don not use while-retry pattern
-
-	// // wait for the lock to be released
-	// for state, vers, _ := lk.ck.Get(lk.l); state == lk.LockState(); state, vers, _ = lk.ck.Get(lk.l) {
-	// 	log.Printf("key: " + lk.l + " state: " + state + " waiting for lock to be released")
-	// 	lk.version = vers
-	// 	log.Print("version: " + strconv.Itoa(int(lk.version)))
-	// }
-
-	// // try to race for the lock
-	// log.Printf("race for the lock")
-	// err := lk.ck.Put(lk.l, lk.LockState(), lk.version)
-
-	// // if don't fetch, try at the next turn
-	// for err != rpc.OK {
-	// 	for state, vers, _ := lk.ck.Get(lk.l); state == lk.UnlockState(); state, vers, _ = lk.ck.Get(lk.l) {
-	// 		log.Printf("key: " + lk.l + " state: " + state + " waiting for lock to be released")
-	// 		lk.version = vers
-	// 		log.Print("version: " + strconv.Itoa(int(lk.version)))
-	// 	}
-
-	// 	log.Printf("race for the lock")
-	// 	err = lk.ck.Put(lk.l, lk.LockState(), lk.version)
-	// }
-
-	// lk.isOwn = true
-	// lk.version ++
 }
 
 func (lk *Lock) Release() {
@@ -106,25 +90,21 @@ func (lk *Lock) Release() {
 	for {
 		// try to release the lock
 		err := lk.ck.Put(lk.l, lk.UnlockState(), lk.version)
+
 		if err == rpc.OK {
 			lk.isOwn = false
 			lk.version++
 			return
 		}
+
+		if err == rpc.ErrMaybe {
+			// check whether the id match
+			state, _, _ := lk.ck.Get(lk.l)
+			if state != lk.id.String() {
+				lk.isOwn = false
+				lk.version++
+				return
+			}
+		}
 	}
-
-	// here is the code don not use while-retry pattern
-
-	// log.Printf("lock released")
-
-	// // try to release the lock
-	// err := lk.ck.Put(lk.l, lk.UnlockState(), lk.version)
-
-	// // if don't fetch, try at the next turn
-	// for _, vers, _ := lk.ck.Get(lk.l); err != rpc.OK; _, vers, _ = lk.ck.Get(lk.l) {	
-	// 	err = lk.ck.Put(lk.l, lk.UnlockState(), vers)
-	// }
-
-	// lk.isOwn = false
-	// lk.version++
 }
