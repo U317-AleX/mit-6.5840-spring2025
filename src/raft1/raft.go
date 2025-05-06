@@ -219,10 +219,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		return
 	}
-
 	reply.Success = true
 	rf.heartbeatReceived = true
 	rf.state = 0
+	rf.currentTerm = args.Term
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -274,11 +274,12 @@ func (rf *Raft) killed() bool {
 }
 
 func (rf *Raft) ticker() {
+	var wg sync.WaitGroup
 	for rf.killed() == false {
-
+		
 		// Your code here (3A)
 		// Check if a leader election should be started.
-
+		
 		// if heartbeat haven't been received, start election
 		rf.mu.Lock()
 		heartbeatReceived := rf.heartbeatReceived
@@ -315,39 +316,43 @@ func (rf *Raft) ticker() {
 
 			for i := range rf.peers {
 				if i != rf.me {
+					wg.Add(1)
 					go func ()  {
+						defer wg.Done()
 						reply := &RequestVoteReply{}
 						rf.sendRequestVote(i, args, reply)
-						
 						rf.mu.Lock()
 						if reply.Term > rf.currentTerm {
 							rf.currentTerm = reply.Term
 						}
-
 						if reply.VoteGranted {
 							cnt ++
+						}
+						if rf.state == 1 && cnt > len(rf.peers)/2 {
+							log.Printf("have a leader now")
+							rf.state = 2
+							go rf.heart()
 						}
 						rf.mu.Unlock()
 					}()
 				}
 			}
 		}
-		
+
+		wg.Wait()
 		rf.mu.Lock()
+		if rf.state == 1 && cnt > len(rf.peers)/2 {
+			log.Printf("have a leader now")
+			rf.state = 2
+			go rf.heart()
+		}
 		rf.heartbeatReceived = false
 		rf.mu.Unlock()
-		
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
 		ms := 50 + (rand.Int63() % 300)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 
-		rf.mu.Lock()
-		if cnt > len(rf.peers)/2 {
-			log.Printf("have a leader now")
-			rf.state = 2
-		}
-		rf.mu.Unlock()
 	}
 }
 
@@ -372,11 +377,14 @@ func (rf *Raft) heart() {
 							rf.currentTerm = reply.Term
 							rf.state = 0
 						}
-						rf.mu.Lock()
+						rf.mu.Unlock()
 					}()
 				}
 			}
 		}
+
+		ms := 10
+		time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
 }
 
@@ -411,9 +419,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
-
-	// start heartbeat to prove it's alive
-	go rf.heart()
 
 	return rf
 }
