@@ -19,7 +19,6 @@ import (
 	"6.5840/tester1"
 )
 
-
 // A Go object implementing a single Raft peer.
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
@@ -31,8 +30,21 @@ type Raft struct {
 	// Your data here (3A, 3B, 3C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-
+	currentTerm	  		int 			// current term of this Raft peer
+	voteFor		  		int				// candidateId that received vote in current term
+										// use -1 when haven't voted for anyone
+	state	  	  		int 			// 0 for follower, 1 for candidate, 2 for leader
+	commitIndex   		int 			// index of the highest log entry applied to state machine
+	lastApplied   		int				// index of the last entry applied to the state machine
+	logs		  		map[int]*Entry	// log entries
+	heartbeatReceived 	bool			// 0 for no received heartbeat
 }
+
+type Entry struct {
+	term		int
+	command		interface{}
+}
+
 
 // return currentTerm and whether this server
 // believes it is the leader.
@@ -41,6 +53,8 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (3A).
+	term = rf.currentTerm
+	isleader = (rf.state == 2)
 	return term, isleader
 }
 
@@ -97,7 +111,6 @@ func (rf *Raft) PersistBytes() int {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (3D).
-
 }
 
 
@@ -105,17 +118,57 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (3A, 3B).
+	term 			int // cadidate's term
+	candidateId		int // cadidate requesting vote
+	lastLogIndex	int // index of candidate's last log entry
+	lastLogTerm		int // term of cadidate's last log entry
 }
 
 // example RequestVote RPC reply structure.
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (3A).
+	term			int  // currentTerm, for candidate to update itself
+	voteGranted		bool // true means cadidate received vote
 }
 
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (3A, 3B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	lastEntry := rf.logs[rf.lastApplied]
+	lastLogTerm := 0 
+	if lastEntry != nil {
+		lastLogTerm = lastEntry.term
+	} 
+	lastLogIndex := rf.lastApplied
+
+	if args.term < rf.currentTerm {
+		reply.term = rf.currentTerm
+		reply.voteGranted = false
+		return
+	}
+
+	if rf.voteFor != -1 && rf.voteFor != args.candidateId {
+		reply.voteGranted = false
+		return
+	}
+
+	if args.lastLogTerm < lastLogTerm {
+		reply.voteGranted = false
+		return
+	}
+
+	if args.lastLogIndex < lastLogIndex {
+		reply.voteGranted = false
+		return
+	}
+
+	reply.voteGranted = true
+	rf.voteFor = args.candidateId
+	rf.heartbeatReceived = true
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -199,6 +252,48 @@ func (rf *Raft) ticker() {
 		// Your code here (3A)
 		// Check if a leader election should be started.
 
+		// if heartbeat haven't been received, start election
+		rf.mu.Lock()
+		if !rf.heartbeatReceived {
+			rf.state = 1
+			rf.currentTerm ++
+			rf.voteFor = rf.me
+			rf.heartbeatReceived = false
+			// the cnt is used for memory the whole votes of the candidate
+			cnt := 1
+
+
+			lastEntry := rf.logs[rf.lastApplied]
+			lastLogTerm := 0 
+			if lastEntry != nil {
+				lastLogTerm = lastEntry.term
+			} 
+			lastLogIndex := rf.lastApplied
+
+			args := &RequestVoteArgs{
+				term: rf.currentTerm,
+				candidateId: rf.me,
+				lastLogIndex: lastLogIndex,
+				lastLogTerm: lastLogTerm,
+			}
+
+			for i := range rf.peers {
+				reply := &RequestVoteReply{}
+				rf.sendRequestVote(i, args, reply)
+				if reply.term > rf.currentTerm {
+					rf.currentTerm = reply.term
+				}
+				if  reply.voteGranted {
+					cnt ++
+				}
+			}
+
+			if cnt > len(rf.peers)/2 {
+				rf.state = 2
+			}
+		}
+		rf.mu.Unlock()
+
 
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
@@ -224,6 +319,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (3A, 3B, 3C).
+	rf.heartbeatReceived = false
+	rf.currentTerm = 0
+	rf.commitIndex = 0
+	rf.lastApplied = 0
+	rf.logs = make(map[int]*Entry)
+	rf.voteFor = -1
+	rf.state = 0
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
