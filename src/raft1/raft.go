@@ -7,8 +7,7 @@ package raft
 // Make() creates a new raft peer that implements the raft interface.
 
 import (
-	//	"bytes"
-	"log"
+	// "bytes"
 	"math/rand"
 	"strconv"
 	"sync"
@@ -124,8 +123,8 @@ type RequestVoteArgs struct {
 	// Your data here (3A, 3B).
 	Term 			int // cadidate's term
 	CandidateId		int // cadidate requesting vote
-	LastLogIndex	int // index of candidate's last log entry
-	LastLogTerm		int // term of cadidate's last log entry
+	// LastLogIndex	int // index of candidate's last log entry
+	// LastLogTerm		int // term of cadidate's last log entry
 }
 
 // example RequestVote RPC reply structure.
@@ -139,31 +138,24 @@ type RequestVoteReply struct {
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (3A, 3B).
-	log.Printf("candidate: " + strconv.Itoa(rf.me) + " begin to handle voteRequest from: " + strconv.Itoa(args.CandidateId))
+	// log.Printf("candidate: " + strconv.Itoa(rf.me) + " begin to handle voteRequest from: " + strconv.Itoa(args.CandidateId))
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-
-	lastLogIndex := len(rf.logs) - 1
-	lastLogTerm := 0
-	if  rf.logs[lastLogIndex] != nil {
-		lastLogTerm = rf.logs[lastLogIndex].term
-	}
-	reply.Term = rf.currentTerm
-
+	term := rf.currentTerm
 
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
 		rf.state = 0
-		if lastLogIndex <= args.LastLogIndex && lastLogTerm <= args.LastLogTerm {
-			reply.VoteGranted = true
-			rf.voteFor = args.CandidateId
-			rf.heartbeatReceived = true
-			return
-		}
+		reply.VoteGranted = true
+		rf.voteFor = args.CandidateId
+		rf.heartbeatReceived = true
+		tester.Annotate("server" + strconv.Itoa(rf.me),"server" + strconv.Itoa(rf.me)+" reply voteRequest "+"term"+strconv.Itoa(args.Term)," server term "+strconv.Itoa(term)+" args term "+strconv.Itoa(args.Term)+" from:" + strconv.Itoa(args.CandidateId)+"reply:" + strconv.FormatBool(reply.VoteGranted))
+		return
 	}
 	
 	reply.VoteGranted = false
+	tester.Annotate("server" + strconv.Itoa(rf.me),"server" + strconv.Itoa(rf.me)+" reply voteRequest "+"term"+strconv.Itoa(args.Term)," server term "+strconv.Itoa(term)+" args term "+strconv.Itoa(args.Term)+" from:" + strconv.Itoa(args.CandidateId)+"reply:" + strconv.FormatBool(reply.VoteGranted))
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -214,15 +206,27 @@ type AppendEntriesReply struct {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	term := rf.currentTerm
 	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm {
 		reply.Success = false
+		tester.Annotate("server"+strconv.Itoa(rf.me),"server" + strconv.Itoa(rf.me)+" reply appendRequest "+"term"+strconv.Itoa(args.Term)," server term "+strconv.Itoa(term)+" args term "+strconv.Itoa(args.Term)+" from:" + strconv.Itoa(args.LeaderId)+"reply:" + strconv.FormatBool(reply.Success))
 		return
 	}
 	reply.Success = true
+
+	if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		rf.voteFor = -1
+	}
+
 	rf.heartbeatReceived = true
-	rf.state = 0
-	rf.currentTerm = args.Term
+
+	if rf.state != 0 {
+		rf.state = 0
+	}
+
+	tester.Annotate("server"+strconv.Itoa(rf.me),"server" + strconv.Itoa(rf.me)+" reply appendRequest "+"term"+strconv.Itoa(args.Term)," server term "+strconv.Itoa(term)+" args term "+strconv.Itoa(args.Term)+" from:" + strconv.Itoa(args.LeaderId)+"reply:" + strconv.FormatBool(reply.Success))
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -274,9 +278,7 @@ func (rf *Raft) killed() bool {
 }
 
 func (rf *Raft) ticker() {
-	var wg sync.WaitGroup
 	for rf.killed() == false {
-		
 		// Your code here (3A)
 		// Check if a leader election should be started.
 		
@@ -284,102 +286,104 @@ func (rf *Raft) ticker() {
 		rf.mu.Lock()
 		heartbeatReceived := rf.heartbeatReceived
 		rf.mu.Unlock()
-		cnt := 0
 
 		// if there is no heartbeat, entry election
 		if !heartbeatReceived {
-			rf.mu.Lock()
-			log.Printf("start election in term:" + strconv.Itoa(rf.currentTerm) + "\n")
-			rf.state = 1
-			rf.currentTerm ++
-			rf.voteFor = rf.me
-			cnt ++
-			// the cnt is used for memory the whole votes of the candidate
-
-			lastEntry := rf.logs[len(rf.logs) - 1]
-			lastLogTerm := 0 
-			if lastEntry != nil {
-				lastLogTerm = lastEntry.term
-			} 
-			lastLogIndex := len(rf.logs) - 1
-
-			args := &RequestVoteArgs{
-				Term: rf.currentTerm,
-				CandidateId: rf.me,
-				LastLogIndex: lastLogIndex,
-				LastLogTerm: lastLogTerm,
-			}
-
-			log.Printf("%#v \n", args)
-			log.Printf("candiate: " + strconv.Itoa(rf.me) + " begin to send RequestVote")
-			rf.mu.Unlock()
-
-			for i := range rf.peers {
-				if i != rf.me {
-					wg.Add(1)
-					go func ()  {
-						defer wg.Done()
-						reply := &RequestVoteReply{}
-						rf.sendRequestVote(i, args, reply)
-						rf.mu.Lock()
-						if reply.Term > rf.currentTerm {
-							rf.currentTerm = reply.Term
-						}
-						if reply.VoteGranted {
-							cnt ++
-						}
-						if rf.state == 1 && cnt > len(rf.peers)/2 {
-							log.Printf("have a leader now")
-							rf.state = 2
-							go rf.heart()
-						}
-						rf.mu.Unlock()
-					}()
-				}
-			}
+			go rf.election()
 		}
-
-		wg.Wait()
+		
 		rf.mu.Lock()
-		if rf.state == 1 && cnt > len(rf.peers)/2 {
-			log.Printf("have a leader now")
-			rf.state = 2
-			go rf.heart()
-		}
 		rf.heartbeatReceived = false
 		rf.mu.Unlock()
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
-		ms := 50 + (rand.Int63() % 300)
+		// ms := 50 + (rand.Int63() % 300) // 50~350ms
+		// ms := 150 + rand.Intn(150)  // 150~300ms
+		// ms := 150 + (rand.Int63() % 350)  // 150~500ms
+		ms := 200 + (rand.Int63() % 400) // 200~600ms
 		time.Sleep(time.Duration(ms) * time.Millisecond)
-
 	}
 }
 
-func (rf *Raft) heart() {
-	for {
-		_, isLeader := rf.GetState()
-		if isLeader {
-			rf.mu.Lock()
-			rf.heartbeatReceived = true
-			args := &AppendEntriesArgs{
-				Term: rf.currentTerm,
-				LeaderId: rf.me,
-			}
-			rf.mu.Unlock()
-			for i := range rf.peers {
-				if i != rf.me {
-					go func ()  {
-						reply := &AppendEntriesReply{}
-						rf.sendAppendEntries(i, args, reply)
-						rf.mu.Lock()
-						if reply.Term > rf.currentTerm {
-							rf.currentTerm = reply.Term
-							rf.state = 0
-						}
-						rf.mu.Unlock()
-					}()
+func (rf *Raft) election() {
+	var wg sync.WaitGroup
+	cnt := 1
+	rf.mu.Lock()
+	rf.state = 1
+	rf.currentTerm ++
+	rf.voteFor = rf.me
+	tester.Annotate("server" + strconv.Itoa(rf.me),"server" + strconv.Itoa(rf.me)+" new a election "+"term:"+strconv.Itoa(rf.currentTerm),"candidate:"+strconv.Itoa(rf.me))
+
+	args := &RequestVoteArgs{
+			Term: rf.currentTerm,
+			CandidateId: rf.me,
+	}
+	rf.mu.Unlock()
+
+	for i := range rf.peers {
+		rf.mu.Lock()
+		flag := rf.state == 1
+		rf.mu.Unlock()
+		if flag && i != rf.me {
+			wg.Add(1)
+			go func (peer int)  {
+				defer wg.Done()
+				reply := &RequestVoteReply{}
+				rf.sendRequestVote(peer, args, reply)
+	
+				rf.mu.Lock()
+				defer rf.mu.Unlock()
+				if reply.Term > rf.currentTerm {
+					rf.currentTerm = reply.Term
+					rf.state = 0
+					rf.voteFor = -1
+					return
 				}
+				if reply.VoteGranted {
+					cnt++
+				}
+				if rf.state == 1 && cnt > len(rf.peers)/2 {
+					rf.state = 2
+					go rf.heart()
+					tester.Annotate("server" + strconv.Itoa(rf.me),"server" + strconv.Itoa(rf.me)+" become new leader term "+strconv.Itoa(rf.currentTerm),"become new leader term "+strconv.Itoa(rf.currentTerm))
+				}
+			}(i)
+		}
+	}
+
+	wg.Wait()
+	rf.mu.Lock()
+	if rf.state == 1 && cnt > len(rf.peers)/2 {
+		rf.state = 2
+		go rf.heart()
+		tester.Annotate("server" + strconv.Itoa(rf.me),"server" + strconv.Itoa(rf.me)+" become new leader "+"term"+strconv.Itoa(rf.currentTerm), "become new leader"+"term"+strconv.Itoa(rf.currentTerm))
+	}
+	rf.mu.Unlock()
+}
+
+func (rf *Raft) heart() {
+	for _, isLeader := rf.GetState(); isLeader; _, isLeader = rf.GetState() {
+		rf.mu.Lock()
+		rf.heartbeatReceived = true
+		args := &AppendEntriesArgs{
+			Term: rf.currentTerm,
+			LeaderId: rf.me,
+		}
+		rf.mu.Unlock()
+		for i := range rf.peers {
+			if i != rf.me {
+				go func ()  {
+					reply := &AppendEntriesReply{}
+					rf.sendAppendEntries(i, args, reply)
+					rf.mu.Lock()
+					defer rf.mu.Unlock()
+					if reply.Term > rf.currentTerm {
+						rf.currentTerm = reply.Term
+						rf.state = 0
+						rf.voteFor = -1
+						return
+					}
+				}()
 			}
 		}
 
