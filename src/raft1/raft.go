@@ -324,7 +324,10 @@ func (rf *Raft) election() {
 		rf.mu.Lock()
 		flag := rf.state == 1
 		rf.mu.Unlock()
-		if flag && i != rf.me {
+		if !flag {
+			return
+		}
+		if i != rf.me {
 			wg.Add(1)
 			go func (peer int)  {
 				defer wg.Done()
