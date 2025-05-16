@@ -8,6 +8,7 @@ import (
 	"time"
 
 	//	"6.5840/labgob"
+	"6.5840/raftapi"
 	"6.5840/tester1"
 )
 
@@ -263,3 +264,30 @@ func (rf *Raft) leaderHealthMonitor() {
 	}
 }
 
+// committedEntrySender sends committed entries to the apply channel.
+func (rf *Raft) committedEntrySender(applyCh chan raftapi.ApplyMsg) {
+	for {
+		rf.mu.Lock()
+		if rf.killed(){
+			rf.mu.Unlock()
+			return
+		}
+
+		for rf.lastApplied < rf.commitIndex {
+			rf.lastApplied++
+			entry := rf.logs[rf.lastApplied]
+			rf.mu.Unlock()
+		
+			applyCh <- raftapi.ApplyMsg{
+				Command:      entry.Command,
+				CommandIndex: rf.lastApplied,
+				CommandValid: true,
+			}
+
+			rf.mu.Lock()
+		}
+
+		rf.mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
+	}
+}

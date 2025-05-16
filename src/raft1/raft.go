@@ -263,6 +263,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.logs = append(rf.logs, entry)
 		}
 	}
+
+	// update commitIndex
+	if args.LeaderCommit > rf.commitIndex {
+		if args.LeaderCommit < len(rf.logs) {
+			rf.commitIndex = args.LeaderCommit
+		} else {
+			rf.commitIndex = len(rf.logs) - 1
+		}
+	}
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -396,6 +405,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
+
+	// start send committed entries to apply channel
+	go rf.committedEntrySender(applyCh)
 
 	return rf
 }
